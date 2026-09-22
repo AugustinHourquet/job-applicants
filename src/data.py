@@ -86,6 +86,9 @@ class DataBundle:
     protected_test: pd.DataFrame
     spec: FeatureSpec
     checks: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # Cleaned but un-encoded test rows. The stability module groups by them to
+    # probe distribution shift, and the app shows real candidates in the form.
+    raw_test: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def feature_names(self) -> list[str]:
@@ -484,6 +487,7 @@ def build_datasets(cfg: Config | None = None, raw: pd.DataFrame | None = None) -
         protected_test=test_df[protected].astype(str).reset_index(drop=True),
         spec=spec,
         checks=checks,
+        raw_test=test_df.reset_index(drop=True),
     )
     logger.info("Built datasets: %s", bundle.describe())
     return bundle
@@ -499,6 +503,9 @@ def persist(bundle: DataBundle, cfg: Config) -> None:
         for col in protected.columns:
             frame[f"protected__{col}"] = protected[col].to_numpy()
         frame.to_parquet(processed / f"{name}.parquet", index=False)
+
+    if not bundle.raw_test.empty:
+        bundle.raw_test.to_parquet(processed / "test_raw.parquet", index=False)
 
     bundle.spec.to_json(processed / SPEC_FILENAME)
     bundle.checks.to_csv(cfg.paths.results_dir / "data_checks.csv", index=False)
