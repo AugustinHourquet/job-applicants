@@ -55,7 +55,10 @@ services:
     image: job-applicants:dev
     container_name: job-applicants-test
     profiles: ["test"]
-    command: ["pytest", "-q"]
+    # -p no:cacheprovider: /app is root-owned while the process runs as `app`,
+    # so pytest cannot write its cache there. The cache buys nothing in a
+    # throwaway container.
+    command: ["pytest", "-q", "-p", "no:cacheprovider"]
 
 volumes:
   # TabPFN's pretrained checkpoint, downloaded once and reused.

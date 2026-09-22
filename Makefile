@@ -43,6 +43,10 @@ clean:  ## Delete generated artifacts and processed data (keeps data/raw)
 
 # ---------------------------------------------------------------- docker ----
 
+requirements:  ## Re-export requirements.txt from uv.lock
+	uv export --frozen --no-dev --no-emit-project --output-file requirements.txt
+	@echo "Re-add the header comment at the top before committing."
+
 docker-build:  ## Build the image
 	docker compose build
 
