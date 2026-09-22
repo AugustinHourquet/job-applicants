@@ -1,0 +1,16 @@
+# Pinned light theme. The chart palette in src/plots.py was validated for
+# contrast and colour-vision deficiency against the light surface specifically,
+# so letting the app follow the viewer's OS theme would invalidate those checks
+# and make the jury demo look different on someone else's laptop.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f5f5f3"
+textColor = "#0b0b0b"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false
