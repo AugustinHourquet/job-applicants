@@ -36,6 +36,12 @@ data:
       separator: ";"
       top_n: 25
 
+  # Categoricals with a long tail (Country has ~170 levels) are capped: the
+  # most frequent levels are kept and the rest collapse into "Other". Keeps the
+  # design matrix small and stops one-hot columns with 3 rows from driving SHAP.
+  max_categorical_levels: 20
+  rare_level_name: Other
+
   categorical_features:
     - Age
     - Accessibility
