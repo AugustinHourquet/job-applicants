@@ -143,7 +143,13 @@ def permutation_importance(
     if y_sample.nunique() < 2:
         return pd.DataFrame()
 
-    correlations = sample.corrwith(y_sample).abs().fillna(0.0)
+    # Constant columns in the sample have zero variance, so a correlation is
+    # undefined for them. Drop them first rather than dividing by zero and
+    # filling the NaN afterwards — they carry no signal to shortlist anyway.
+    varying = sample.loc[:, sample.nunique() > 1]
+    if varying.empty:
+        return pd.DataFrame()
+    correlations = varying.corrwith(y_sample).abs().fillna(0.0)
     candidates = correlations.nlargest(min(max_features, len(correlations))).index.tolist()
 
     baseline = roc_auc_score(y_sample, fitted.predict_proba(sample))

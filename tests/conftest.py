@@ -131,9 +131,18 @@ def cfg(tmp_path) -> Config:
     config.paths.figures_dir = tmp_path / "figures"
     config.paths.mkdirs()
 
-    config.stability.n_boot = 3
+    # Everything shrunk so the full pipeline runs in seconds. These are the
+    # knobs that dominate runtime; leaving any of them at their production
+    # value pushes the suite past a minute.
+    config.stability.n_boot = 2
+    config.stability.eval_subsample = 60
+    config.stability.bootstrap_frac = 0.8
     config.stability.perturbation["n_repeats"] = 2
-    config.interpretability.shap_sample = 100
-    config.interpretability.local_examples = 3
-    config.models["tabpfn"].train_subsample = 200
+    config.stability.shift["min_group_size"] = 25
+    config.interpretability.shap_sample = 60
+    config.interpretability.local_examples = 2
+    config.interpretability.permutation_sample = 50
+    config.interpretability.permutation_max_features = 4
+    config.interpretability.permutation_repeats = 1
+    config.models["tabpfn"].train_subsample = 100
     return config

@@ -63,5 +63,8 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+markers = [
+    "slow: full-pipeline runs; deselect with -m 'not slow'",
+]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]

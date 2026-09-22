@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.15"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        # --frozen fails if uv.lock is out of date with pyproject.toml, which
+        # is what keeps everyone on the same resolved versions.
+        run: uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check src app tests
+          uv run ruff format --check src app tests
+
+      - name: Test
+        # The suite generates its own synthetic data, so no Kaggle credentials
+        # and no network access are needed here.
+        run: uv run pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: false
+          load: true
+          tags: job-applicants:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the image
+        # Proves the container can import the full stack — including XGBoost's
+        # OpenMP runtime and torch — before anyone relies on it for the demo.
+        run: |
+          docker run --rm job-applicants:ci python -c "
+          import src, sklearn, xgboost, torch, tabpfn, streamlit, shap
+          from src.config import load_config
+          cfg = load_config()
+          print('image OK — models configured:', cfg.enabled_models)
+          "
