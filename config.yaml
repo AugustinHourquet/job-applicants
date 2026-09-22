@@ -125,11 +125,29 @@ models:
 # coaching and placement effort in. Positive class = candidate ends up employed.
 economics:
   currency: EUR
+  # The client sponsors a candidate: paid coaching and recruiter time up front,
+  # a placement fee on success. Sponsoring is genuinely expensive, which is why
+  # the decision is interesting — if screening were cheap the answer would just
+  # be "sponsor everyone".
   cost_matrix:
-    true_positive: 3000      # placement fee earned
-    false_positive: -800     # coaching + recruiter hours spent, no placement
-    false_negative: -1200    # opportunity cost of passing on a placeable candidate
-    true_negative: 0         # correctly declined, no cost
+    true_positive: 3000      # placement fee earned on a sponsored candidate
+    false_positive: -2500    # coaching + recruiter time spent, no placement
+    false_negative: -500     # margin lost on someone who placed without us
+    true_negative: 0         # correctly declined, nothing spent
+  #
+  # Sanity check for the empirical optimum below. Under this matrix a candidate
+  # is worth sponsoring when their predicted probability exceeds
+  #
+  #     t* = (C_TN - C_FP) / ((C_TN - C_FP) + (C_TP - C_FN))
+  #        = 2500 / (2500 + 3500) = 0.417
+  #
+  # A model whose profit-maximising threshold sits far from 0.417 is telling you
+  # its probabilities are miscalibrated, which is itself worth a slide.
+  #
+  # An earlier draft used -800 / -1200 here. That put t* at 0.16, made
+  # "sponsor almost everyone" optimal, and left the model adding almost nothing
+  # over the accept-all baseline. Keep FP expensive relative to FN or the whole
+  # economic analysis degenerates.
   threshold_grid:
     start: 0.01
     stop: 0.99
