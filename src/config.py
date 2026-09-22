@@ -12,6 +12,7 @@ reachable via attribute access.
 from __future__ import annotations
 
 import functools
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,23 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Which config a bare `load_config()` picks up. The env var lets the Streamlit
+# app point at a variant without a code change — `streamlit run` takes no
+# pipeline-style flags of its own, and silently showing the wrong variant's
+# artifacts is exactly the mistake worth engineering out.
+CONFIG_ENV_VAR = "JOBAPP_CONFIG"
+
+
+def default_config_path() -> Path:
+    """Config file used when none is given: ``$JOBAPP_CONFIG`` or config.yaml."""
+    override = os.environ.get(CONFIG_ENV_VAR)
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+    return PROJECT_ROOT / "config.yaml"
+
+
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 
@@ -172,6 +190,17 @@ class Config(_Section):
     def raw_path(self) -> Path:
         return self.paths.raw_dir / self.data.raw_filename
 
+    # Set by load_config so the app can show which variant is on screen.
+    source_path: Path | None = None
+
+    @property
+    def variant(self) -> str:
+        """Human-readable name of the config in use, for display."""
+        if self.source_path is None:
+            return "default"
+        stem = self.source_path.stem
+        return "default" if stem == "config" else stem.replace("config.", "")
+
 
 def load_config(path: str | Path | None = None, *, mkdirs: bool = True) -> Config:
     """Load, validate and return the project configuration.
@@ -184,7 +213,7 @@ def load_config(path: str | Path | None = None, *, mkdirs: bool = True) -> Confi
         path: Config file to read. Defaults to ``config.yaml`` at the repo root.
         mkdirs: Create the configured directories after resolving them.
     """
-    config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
+    config_path = Path(path) if path is not None else default_config_path()
     if not config_path.is_file():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
@@ -192,6 +221,7 @@ def load_config(path: str | Path | None = None, *, mkdirs: bool = True) -> Confi
         raw = yaml.safe_load(handle) or {}
 
     cfg = Config.model_validate(raw)
+    cfg.source_path = config_path.resolve()
     cfg.paths.resolve(config_path.resolve().parent)
     if mkdirs:
         cfg.paths.mkdirs()

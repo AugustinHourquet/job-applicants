@@ -102,7 +102,33 @@ def page_setup(title: str, icon: str = "📊") -> Config:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    variant_banner(cfg)
     return cfg
+
+
+def variant_banner(cfg: Config) -> None:
+    """Say which feature set is on screen, on every page.
+
+    Two variants of this analysis exist and they disagree wildly — one has a
+    perfect AUC because a feature encodes the answer. Reading a number off the
+    wrong one, and putting it in a slide, is the easiest mistake available here,
+    so the app states which it is rather than leaving it to be inferred from a
+    directory name.
+    """
+    excluded = list(cfg.data.exclude_features)
+    with st.sidebar:
+        if excluded:
+            st.success(
+                f"**Honest variant**\n\nExcluded: {', '.join(f'`{c}`' for c in excluded)}",
+                icon="✅",
+            )
+        else:
+            st.warning(
+                "**Leaky variant** — all features, including the ones that leak "
+                "the target. Numbers here are for the contrast, not for deployment.",
+                icon="⚠️",
+            )
+        st.caption(f"config: `{cfg.variant}` · reading `{cfg.paths.results_dir.parent.name}/`")
 
 
 def require_pipeline(*frames: pd.DataFrame) -> bool:

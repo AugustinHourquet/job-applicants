@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import Config, load_config
+from src.config import PROJECT_ROOT, Config, load_config
 
 TECHNOLOGIES = [
     "Python",
@@ -123,7 +123,9 @@ def cfg(tmp_path) -> Config:
     Everything is shrunk so the whole pipeline runs in seconds: fewer bootstrap
     re-fits, a smaller SHAP sample, and a TabPFN subsample well under its limit.
     """
-    config = load_config(mkdirs=False)
+    # Explicit path: the suite must not follow a JOBAPP_CONFIG someone has
+    # exported in their shell.
+    config = load_config(PROJECT_ROOT / "config.yaml", mkdirs=False)
     config.paths.raw_dir = tmp_path / "raw"
     config.paths.processed_dir = tmp_path / "processed"
     config.paths.models_dir = tmp_path / "models"

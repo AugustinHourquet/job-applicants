@@ -2,7 +2,7 @@
 # Run `make` with no target to see this list.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup data pipeline app test lint fmt clean \
+.PHONY: help setup data pipeline pipeline-honest compare app app-honest test lint fmt clean \
         docker-build docker-app docker-pipeline docker-test docker-clean
 
 help:  ## Show this help
@@ -28,8 +28,11 @@ pipeline-honest:  ## Same pipeline, leaking features excluded (writes artifacts-
 compare:  ## Print both scorecards side by side
 	uv run python -m src.compare
 
-app:  ## Launch Streamlit locally on http://localhost:8501
+app:  ## Launch Streamlit on the leaky variant (artifacts/)
 	uv run streamlit run app/Home.py
+
+app-honest:  ## Launch Streamlit on the honest variant (artifacts-honest/)
+	JOBAPP_CONFIG=config.honest.yaml uv run streamlit run app/Home.py
 
 test:  ## Run the smoke suite (no Kaggle credentials needed)
 	uv run pytest
