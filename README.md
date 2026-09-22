@@ -178,6 +178,49 @@ module — so read the other five files.
 
 ---
 
+## The headline finding: this dataset leaks
+
+**Held-out AUC is 1.000 with the full feature set.** That is not a good model;
+it is a model that has been told the answer.
+
+Isolated by the multivariate screen in `src/data.py`:
+
+| Feature group | Columns | Held-out AUC |
+|---|---|---|
+| **All features** | 61 | **1.0000** |
+| **`HaveWorkedWith` (tech indicators + skill count)** | 26 | **1.0000** |
+| `ComputerSkills` | 1 | 0.8643 |
+| `EdLevel` | 4 | 0.5546 |
+| everything else | — | ≈ 0.50 |
+
+The list of technologies a candidate has used separates employed from unemployed
+perfectly, while every demographic and experience column sits near chance.
+`ComputerSkills` is also **byte-identical** to the count of those technologies —
+a duplicated column, not an independent signal.
+
+**The per-feature screen did not catch this**, and could not: no single column
+exceeds 0.87. The leak lives entirely in a combination. That is why
+`run_multivariate_check` exists, why it fits a *non-linear* model (an earlier
+linear version missed a planted XOR leak), and why it reports a per-group
+breakdown instead of a single number.
+
+We are **keeping these features on purpose** — the leakage is the finding this
+project reports. To produce the honest-model comparison for the deck, uncomment
+`data.exclude_features` in `config.yaml` and re-run. Nothing else changes, and
+the two scorecards are directly comparable:
+
+| Feature set | Test AUC |
+|---|---|
+| everything (current) | 1.0000 |
+| drop the 25 tech indicators, keep the count | 0.8744 |
+| drop all `HaveWorkedWith` + `ComputerSkills` | 0.5849 |
+
+Related: `YearsCode` and `YearsCodePro` are flagged as **proxies for `Age`**
+(normalised MI 0.48 and 0.45). Dropping `Age` would not make the model
+age-neutral, because years-of-experience carries the same information.
+
+---
+
 ## Methodology notes worth defending
 
 These are deliberate choices, not defaults. Each one is a likely Q&A question.
@@ -195,6 +238,9 @@ These are deliberate choices, not defaults. Each one is a likely Q&A question.
   trade off, and choosing between them is the client's call.
 - **Leakage and proxy findings are reported, never auto-applied.** Dropping a
   column is a modelling decision we defend, not something a script does silently.
+- **Leakage is screened twice, per-feature and multivariate.** The per-feature
+  screen alone would have passed this dataset. The multivariate one uses a
+  non-linear model, because a linear screen can only find linear leaks.
 - **Interpretability uses a different method per model** — exact odds ratios,
   exact TreeSHAP, and permutation importance for TabPFN. That TabPFN is the
   hardest of the three to explain is itself a finding.

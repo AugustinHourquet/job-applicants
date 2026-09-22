@@ -65,19 +65,35 @@ class DataSection(_Section):
     target: str
     drop_columns: list[dict[str, str]] = Field(default_factory=list)
     multilabel_columns: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    exclude_features: list[str] = Field(default_factory=list)
     categorical_features: list[str] = Field(default_factory=list)
     numeric_features: list[str] = Field(default_factory=list)
     split: SplitSection = Field(default_factory=SplitSection)
 
     @property
     def declared_columns(self) -> list[str]:
-        """Every column the config expects to find in the raw CSV."""
+        """Every column the config expects to find in the raw CSV.
+
+        Includes excluded columns: they must still be present and readable, so
+        that excluding one is a modelling choice rather than a way to paper over
+        a schema mismatch.
+        """
         return [
             *self.categorical_features,
             *self.numeric_features,
             *self.multilabel_columns,
             self.target,
         ]
+
+    def modelling_columns(self, kind: str) -> list[str]:
+        """Columns of one kind that survive ``exclude_features``."""
+        source = {
+            "categorical": self.categorical_features,
+            "numeric": self.numeric_features,
+            "multilabel": list(self.multilabel_columns),
+        }[kind]
+        excluded = set(self.exclude_features)
+        return [c for c in source if c not in excluded]
 
     @property
     def drop_column_names(self) -> list[str]:
@@ -87,6 +103,7 @@ class DataSection(_Section):
 class ChecksSection(_Section):
     leakage_auc_threshold: float = 0.90
     proxy_nmi_threshold: float = 0.20
+    multivariate_leakage_auc_threshold: float = 0.95
 
 
 class ModelSpec(_Section):

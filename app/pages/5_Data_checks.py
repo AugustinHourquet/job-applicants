@@ -5,7 +5,18 @@ Owner: Member 1. Replaces the exploratory notebook as a deliverable.
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
 import streamlit as st
+
+# Streamlit puts the entrypoint's directory on sys.path, so pages normally find
+# _shared only because Home.py was launched first. Doing it explicitly means a
+# page can also be run or tested on its own.
+_APP_DIR = _Path(__file__).resolve().parent.parent
+if str(_APP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_APP_DIR))
+
 from _shared import load_result, metric_row, page_setup, require_pipeline
 
 cfg = page_setup("Data checks", "🔍")
@@ -41,7 +52,61 @@ metric_row(
 )
 
 st.divider()
-st.subheader("Target leakage")
+st.subheader("Multivariate leakage — the headline finding")
+st.markdown(
+    """
+The per-feature screen below is **necessary but not sufficient**. A leak can
+live entirely in a *combination* of columns, where no individual column looks
+unusual. This screen fits a linear model on the full encoded matrix, scores it
+on held-out validation data, then repeats for each feature group so the source
+is named rather than inferred.
+"""
+)
+
+multivariate = load_result("data_checks_multivariate")
+if multivariate.empty:
+    st.info("Re-run the pipeline to generate this check.")
+else:
+    overall = multivariate[multivariate["scope"] == "ALL FEATURES"]
+    culprits = multivariate[
+        (multivariate["scope"] != "ALL FEATURES") & multivariate["leakage_flag"]
+    ]
+    if not overall.empty and bool(overall["leakage_flag"].iloc[0]):
+        st.error(
+            f"**Target leakage confirmed.** All features together reach a held-out "
+            f"AUC of **{overall['holdout_auc'].iloc[0]:.4f}**. A model this good is "
+            "not a good model — it is a model that has been told the answer."
+        )
+        if not culprits.empty:
+            names = ", ".join(f"`{n}`" for n in culprits["scope"])
+            st.warning(
+                f"Isolated to: {names}. That group reaches the same AUC on its own, "
+                "while every other group sits near chance."
+            )
+    else:
+        st.success("No multivariate leakage detected.")
+
+    st.dataframe(
+        multivariate,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "scope": st.column_config.TextColumn("Feature group"),
+            "n_columns": st.column_config.NumberColumn("Columns"),
+            "holdout_auc": st.column_config.ProgressColumn(
+                "Held-out AUC", min_value=0.5, max_value=1.0, format="%.4f"
+            ),
+            "leakage_flag": st.column_config.CheckboxColumn("Flagged"),
+        },
+    )
+    st.caption(
+        "Read this top-down: if the first row is near 1.0 and one group below it "
+        "matches, that group is the leak. If the first row is near 1.0 and no "
+        "single group is, the leak lives in the interaction between groups."
+    )
+
+st.divider()
+st.subheader("Single-feature leakage")
 st.markdown(
     f"""
 Each feature is scored **on its own** against the target. Categoricals are

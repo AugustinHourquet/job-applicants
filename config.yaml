@@ -42,6 +42,18 @@ data:
   max_categorical_levels: 20
   rare_level_name: Other
 
+  # Raw columns excluded from modelling. Empty means "use everything".
+  #
+  # We are KEEPING the leaky HaveWorkedWith indicators on purpose: the leakage
+  # is the finding this project reports. To produce the honest-model comparison
+  # for the deck, uncomment the two entries below and re-run — nothing else
+  # changes, and the scorecard becomes directly comparable.
+  #
+  # exclude_features:
+  #   - HaveWorkedWith        # 25 tech indicators + count: held-out AUC 1.000
+  #   - ComputerSkills        # byte-identical to the HaveWorkedWith skill count
+  exclude_features: []
+
   categorical_features:
     - Age
     - Accessibility
@@ -71,6 +83,17 @@ checks:
   # Normalised mutual information between a feature and a protected attribute.
   # Above this, the feature is a usable proxy for that attribute.
   proxy_nmi_threshold: 0.20
+
+  # Multivariate leakage. The single-feature screen above is necessary but not
+  # sufficient: on this dataset no individual column exceeds 0.87, yet the 25
+  # HaveWorkedWith technology indicators together separate the target perfectly
+  # (held-out AUC 1.000). A leak can live entirely in a combination.
+  #
+  # This screen fits a fast linear model on the full encoded matrix, scores it
+  # on validation, and repeats per feature group so the source is immediately
+  # visible rather than inferred.
+  multivariate_leakage_auc_threshold: 0.95
+
 
 # ------------------------------------------------------------- Members 1-3 --
 # One entry per model. `enabled: false` skips it without touching any code.
@@ -107,8 +130,10 @@ models:
     #     context  2000 ->  17.4s     full 14k test set ~=  4 min
     #     context  4000 ->  44.5s     full 14k test set ~= 10 min
     #
-    # 3000 keeps a full pipeline run (~26k val+test rows) near 13 minutes while
-    # staying well inside TabPFN's strong small-data regime. We fit on a
+    # Measured again on the REAL data (61 features, 26,446 val+test rows): a
+    # context of 3000 took 33 minutes, not the 13 estimated from a 42-feature
+    # synthetic run. Cost scales with feature count too. Budget half an hour for
+    # a full pipeline run, or drop this to ~1500 while iterating. We fit on a
     # stratified subsample but ALWAYS evaluate on the FULL test set, so its row
     # in the scorecard is comparable with the other two. Say so in the deck.
     train_subsample: 3000

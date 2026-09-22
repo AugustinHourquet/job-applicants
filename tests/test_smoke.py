@@ -79,6 +79,47 @@ def test_proxy_check_is_not_fooled_by_cardinality(raw_df, cfg):
 # ------------------------------------------------------------------- models --
 
 
+def test_multivariate_check_catches_a_combination_leak(raw_df, cfg):
+    """A leak invisible to the per-column screen must still be caught.
+
+    Regression test for the real finding: on the Kaggle data no single column
+    exceeds 0.87, yet the HaveWorkedWith indicators together reach a held-out
+    AUC of 1.000. Here we plant an equivalent leak — two columns that are
+    individually uninformative but jointly reveal the target.
+    """
+    frame = raw_df.copy()
+    rng = np.random.default_rng(0)
+    noise = rng.integers(0, 2, size=len(frame))
+    # Individually each is a coin flip; their XOR is exactly the target.
+    frame["YearsCode"] = noise
+    frame["YearsCodePro"] = noise ^ frame[cfg.data.target].to_numpy()
+
+    bundle = data.build_datasets(cfg, raw=frame)
+    report = bundle.multivariate_checks
+    assert not report.empty
+    overall = report[report["scope"] == "ALL FEATURES"]["holdout_auc"].iloc[0]
+    assert overall > 0.9, f"combination leak went undetected (AUC {overall})"
+
+
+def test_multivariate_check_names_every_feature_group(raw_df, cfg):
+    bundle = data.build_datasets(cfg, raw=raw_df)
+    scopes = set(bundle.multivariate_checks["scope"])
+    assert "ALL FEATURES" in scopes
+    for column in cfg.data.categorical_features + cfg.data.numeric_features:
+        assert column in scopes, f"{column} missing from the group breakdown"
+
+
+def test_exclude_features_removes_columns_from_the_matrix(raw_df, cfg):
+    """Switching to the honest feature set must be a config change only."""
+    cfg.data.exclude_features = ["HaveWorkedWith", "ComputerSkills"]
+    bundle = data.build_datasets(cfg, raw=raw_df)
+    assert not [c for c in bundle.feature_names if c.startswith("HaveWorkedWith")]
+    assert "ComputerSkills" not in bundle.feature_names
+    # And the app's single-row encoding must follow the same exclusion.
+    one = data.apply_feature_spec(raw_df.head(1), bundle.spec)
+    assert list(one.columns) == bundle.feature_names
+
+
 def test_registry_covers_every_configured_model(cfg):
     for name in cfg.enabled_models:
         assert name in models.available_models()

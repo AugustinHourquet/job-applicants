@@ -86,6 +86,7 @@ class DataBundle:
     protected_test: pd.DataFrame
     spec: FeatureSpec
     checks: pd.DataFrame = field(default_factory=pd.DataFrame)
+    multivariate_checks: pd.DataFrame = field(default_factory=pd.DataFrame)
     # Cleaned but un-encoded test rows. The stability module groups by them to
     # probe distribution shift, and the app shows real candidates in the form.
     raw_test: pd.DataFrame = field(default_factory=pd.DataFrame)
@@ -324,6 +325,96 @@ def run_checks(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     return report.reset_index(drop=True)
 
 
+def feature_group(name: str) -> str:
+    """Map an encoded column back to the raw column it came from.
+
+    ``Gender=Woman`` -> ``Gender``; ``HaveWorkedWith=Python`` -> ``HaveWorkedWith``;
+    ``HaveWorkedWith__n_skills`` -> ``HaveWorkedWith``; ``YearsCode`` -> itself.
+    """
+    if "__" in name:
+        return name.split("__", 1)[0]
+    if "=" in name:
+        return name.split("=", 1)[0]
+    return name
+
+
+def run_multivariate_check(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    X_val: pd.DataFrame,
+    y_val: pd.Series,
+    cfg: Config,
+) -> pd.DataFrame:
+    """Screen for leakage that lives in a *combination* of features.
+
+    The single-feature screen in :func:`run_checks` is necessary but not
+    sufficient. On this dataset no individual column exceeds 0.87, yet the 25
+    HaveWorkedWith technology indicators together separate the target perfectly.
+    A leak can be entirely multivariate and a per-column screen will never see it.
+
+    Fits a small gradient-boosted model on the full encoded matrix, scores it on
+    the validation split, then repeats per feature group so the source is named
+    rather than something a human has to go looking for.
+
+    A *non-linear* screen on purpose. An earlier version used logistic
+    regression and missed a planted XOR leak entirely — two columns that are
+    each a coin flip on their own but jointly reveal the target. A linear screen
+    can only find linear leaks, which is a weak guarantee for something whose
+    whole job is catching what the per-column screen cannot.
+
+    Scoring on held-out data is what makes a flexible model safe here: one that
+    overfits shows up as a *lower* validation AUC, never a falsely high one.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    threshold = float(getattr(cfg.checks, "multivariate_leakage_auc_threshold", 0.95))
+
+    def holdout_auc(columns: list[str]) -> float:
+        if not columns or y_train.nunique() < 2 or y_val.nunique() < 2:
+            return float("nan")
+        model = HistGradientBoostingClassifier(
+            max_iter=60, max_depth=4, learning_rate=0.2, random_state=cfg.seed
+        )
+        model.fit(X_train[columns], y_train)
+        return float(roc_auc_score(y_val, model.predict_proba(X_val[columns])[:, 1]))
+
+    groups: dict[str, list[str]] = {}
+    for column in X_train.columns:
+        groups.setdefault(feature_group(column), []).append(column)
+
+    rows = [
+        {
+            "scope": "ALL FEATURES",
+            "n_columns": len(X_train.columns),
+            "holdout_auc": round(holdout_auc(list(X_train.columns)), 4),
+        }
+    ]
+    rows += [
+        {
+            "scope": name,
+            "n_columns": len(columns),
+            "holdout_auc": round(holdout_auc(columns), 4),
+        }
+        for name, columns in sorted(groups.items())
+    ]
+
+    report = pd.DataFrame(rows)
+    report["leakage_flag"] = report["holdout_auc"] >= threshold
+    report = report.sort_values("holdout_auc", ascending=False).reset_index(drop=True)
+
+    overall = report.loc[report["scope"] == "ALL FEATURES", "holdout_auc"].iloc[0]
+    if overall >= threshold:
+        culprits = report[(report["scope"] != "ALL FEATURES") & report["leakage_flag"]]
+        logger.warning(
+            "MULTIVARIATE LEAKAGE: all features together reach holdout AUC %.4f "
+            "(threshold %.2f). Feature groups that leak on their own: %s",
+            overall,
+            threshold,
+            culprits["scope"].tolist() or "none individually — the leak is in the combination",
+        )
+    return report
+
+
 # ---------------------------------------------------------------------------
 # Feature engineering
 # ---------------------------------------------------------------------------
@@ -346,7 +437,7 @@ def fit_feature_spec(train_df: pd.DataFrame, cfg: Config) -> FeatureSpec:
 
     categorical_levels: dict[str, list[str]] = {}
     reference_levels: dict[str, str] = {}
-    for col in data_cfg.categorical_features:
+    for col in data_cfg.modelling_columns("categorical"):
         counts = train_df[col].astype(str).value_counts()
         kept = counts.head(max_levels).index.tolist()
         if len(counts) > max_levels:
@@ -357,21 +448,27 @@ def fit_feature_spec(train_df: pd.DataFrame, cfg: Config) -> FeatureSpec:
         reference_levels[col] = str(counts.index[0])
 
     tech_vocabulary: dict[str, list[str]] = {}
+    kept_multilabel = set(data_cfg.modelling_columns("multilabel"))
     for col, settings in data_cfg.multilabel_columns.items():
+        if col not in kept_multilabel:
+            continue
         separator = settings.get("separator", ";")
         top_n = int(settings.get("top_n", 25))
         exploded = _split_tokens(train_df[col], separator).explode().dropna()
         tech_vocabulary[col] = exploded.value_counts().head(top_n).index.tolist()
 
+    numeric_columns = data_cfg.modelling_columns("numeric")
     numeric_medians = {
         col: float(pd.to_numeric(train_df[col], errors="coerce").median())
-        for col in data_cfg.numeric_features
+        for col in numeric_columns
     }
+    if data_cfg.exclude_features:
+        logger.info("Excluded from modelling by config: %s", data_cfg.exclude_features)
 
     spec = FeatureSpec(
         categorical_levels=categorical_levels,
         reference_levels=reference_levels,
-        numeric_features=list(data_cfg.numeric_features),
+        numeric_features=numeric_columns,
         numeric_medians=numeric_medians,
         tech_vocabulary=tech_vocabulary,
         rare_level_name=rare_name,
@@ -489,6 +586,9 @@ def build_datasets(cfg: Config | None = None, raw: pd.DataFrame | None = None) -
         checks=checks,
         raw_test=test_df.reset_index(drop=True),
     )
+    bundle.multivariate_checks = run_multivariate_check(
+        bundle.X_train, bundle.y_train, bundle.X_val, bundle.y_val, cfg
+    )
     logger.info("Built datasets: %s", bundle.describe())
     return bundle
 
@@ -509,6 +609,10 @@ def persist(bundle: DataBundle, cfg: Config) -> None:
 
     bundle.spec.to_json(processed / SPEC_FILENAME)
     bundle.checks.to_csv(cfg.paths.results_dir / "data_checks.csv", index=False)
+    if not bundle.multivariate_checks.empty:
+        bundle.multivariate_checks.to_csv(
+            cfg.paths.results_dir / "data_checks_multivariate.csv", index=False
+        )
     logger.info("Processed splits written to %s", processed)
 
 

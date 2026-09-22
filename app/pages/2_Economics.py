@@ -11,9 +11,20 @@ single most useful thing this page teaches.
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+# Streamlit puts the entrypoint's directory on sys.path, so pages normally find
+# _shared only because Home.py was launched first. Doing it explicitly means a
+# page can also be run or tested on its own.
+_APP_DIR = _Path(__file__).resolve().parent.parent
+if str(_APP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_APP_DIR))
+
 from _shared import chart_with_table, load_predictions, metric_row, page_setup, require_pipeline
 
 from src import plots

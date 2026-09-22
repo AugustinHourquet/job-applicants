@@ -9,8 +9,19 @@ so what the client sees here is exactly what the pipeline would produce.
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+
 import pandas as pd
 import streamlit as st
+
+# Streamlit puts the entrypoint's directory on sys.path, so pages normally find
+# _shared only because Home.py was launched first. Doing it explicitly means a
+# page can also be run or tested on its own.
+_APP_DIR = _Path(__file__).resolve().parent.parent
+if str(_APP_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_APP_DIR))
+
 from _shared import load_feature_spec, load_models, load_raw_test, page_setup
 
 from src import plots

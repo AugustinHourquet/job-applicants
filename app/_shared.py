@@ -40,6 +40,7 @@ RESULT_FILES = {
     "odds_ratios": "odds_ratios.csv",
     "local_explanations": "local_explanations.csv",
     "data_checks": "data_checks.csv",
+    "data_checks_multivariate": "data_checks_multivariate.csv",
 }
 
 
