@@ -5,6 +5,7 @@ HEC Paris — Interpretability, Stability & Algorithmic Fairness, Fall 2026.
 
 import os
 import platform
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # macOS OpenMP guard. Must run before numpy, sklearn, xgboost or torch is
@@ -28,5 +29,23 @@ import platform
 # ---------------------------------------------------------------------------
 if platform.system() == "Darwin":
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+
+# ---------------------------------------------------------------------------
+# Load .env into the environment.
+#
+# docker compose reads .env by itself, but `uv run` and `streamlit run` do not,
+# so without this the Kaggle credentials sit in the file and the pipeline still
+# reports them missing. Loaded here, before any module reads os.environ.
+#
+# override=False: a variable already exported in your shell wins over the file,
+# which is what you want in CI and when temporarily overriding a value.
+# ---------------------------------------------------------------------------
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+except ImportError:  # pragma: no cover - python-dotenv is a declared dependency
+    pass
 
 __version__ = "0.1.0"

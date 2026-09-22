@@ -53,8 +53,10 @@ The dataset is pulled with the official `kagglehub` library, which needs a token
    KAGGLE_KEY=your_key
    ```
 
-`.env` is gitignored. Never commit it. The test suite generates its own synthetic
-data, so you can run `make test` before you ever set this up.
+`.env` is gitignored. Never commit it. It is loaded automatically by
+`src/__init__.py` — you do **not** need to `export` anything or `source` it. The
+test suite generates its own synthetic data, so you can run `make test` before
+you ever set this up.
 
 ---
 
