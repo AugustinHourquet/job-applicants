@@ -159,6 +159,18 @@ interpretability:
   top_features: 20
   local_examples: 10         # individual candidates explained in the app
 
+  # Permutation importance is the fallback for TabPFN, which has no tree
+  # structure for TreeSHAP and is far too slow for KernelSHAP on CPU. It costs
+  # one full inference pass per (feature x repeat), so the budget is explicit:
+  # 12 features x 2 repeats = 24 passes over 300 rows, roughly 4 minutes.
+  # Left uncapped over all 42 features it took longer than the rest of the
+  # pipeline combined. Features are shortlisted by absolute correlation with
+  # the target, a cheap model-agnostic screen — state in the deck that this is
+  # a shortlist, not an exhaustive ranking.
+  permutation_sample: 300
+  permutation_max_features: 12
+  permutation_repeats: 2
+
 # ---------------------------------------------------------------- Member 4 --
 stability:
   n_boot: 50                 # bootstrap re-fits per model

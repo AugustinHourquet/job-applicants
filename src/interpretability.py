@@ -120,26 +120,37 @@ def linear_shap(
 
 
 def permutation_importance(
-    cfg: Config, fitted: FittedModel, X: pd.DataFrame, y: pd.Series, n_repeats: int = 3
+    cfg: Config, fitted: FittedModel, X: pd.DataFrame, y: pd.Series
 ) -> pd.DataFrame:
     """Model-agnostic fallback: AUC lost when a feature is shuffled.
 
-    Used for TabPFN, where exact SHAP is unaffordable. Restricted to the
-    features that matter most elsewhere, because each one costs a full
-    inference pass.
+    Used for TabPFN, where TreeSHAP does not apply and KernelSHAP would need
+    thousands of CPU forward passes. Every (feature, repeat) pair costs one full
+    inference pass, so the budget is capped in config and the candidate features
+    are shortlisted first by absolute correlation with the target — a cheap,
+    model-agnostic screen. The result is a shortlist ranking, not an exhaustive
+    one, and the deck should say so.
     """
     from sklearn.metrics import roc_auc_score
 
-    sample = _sample(cfg, X)
+    settings = cfg.interpretability
+    n_rows = int(getattr(settings, "permutation_sample", 300))
+    max_features = int(getattr(settings, "permutation_max_features", 12))
+    n_repeats = int(getattr(settings, "permutation_repeats", 2))
+
+    sample = X.sample(n=min(n_rows, len(X)), random_state=cfg.seed)
     y_sample = y.loc[sample.index]
     if y_sample.nunique() < 2:
         return pd.DataFrame()
+
+    correlations = sample.corrwith(y_sample).abs().fillna(0.0)
+    candidates = correlations.nlargest(min(max_features, len(correlations))).index.tolist()
 
     baseline = roc_auc_score(y_sample, fitted.predict_proba(sample))
     rng = np.random.default_rng(cfg.seed)
 
     rows = []
-    for feature in sample.columns:
+    for feature in candidates:
         drops = []
         for _ in range(n_repeats):
             shuffled = sample.copy()
@@ -151,7 +162,7 @@ def permutation_importance(
                 "feature": feature,
                 "mean_abs_shap": float(np.mean(drops)),  # named for a shared schema
                 "mean_shap": float(np.mean(drops)),
-                "method": "permutation importance (AUC drop)",
+                "method": f"permutation importance, AUC drop ({n_repeats}x, top-{max_features} shortlist)",
             }
         )
     return pd.DataFrame(rows).sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
