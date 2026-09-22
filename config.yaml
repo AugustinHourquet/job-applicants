@@ -98,15 +98,25 @@ models:
   tabpfn:
     enabled: true
     owner: "Member 3"
-    # TabPFN is a fixed-context transformer: inference cost grows with the
-    # training set and it is not designed for 70k rows on CPU. We fit on a
-    # stratified subsample but ALWAYS evaluate on the full test set, so the
-    # scorecard stays comparable across the three models. State this in the deck.
-    train_subsample: 10000
+    # TabPFN is a fixed-context transformer. Inference cost grows super-linearly
+    # with the training context, and it refuses >1000 CPU rows unless the limit
+    # is explicitly overridden. Measured on this machine (CPU, 42 features,
+    # seconds per 1000 test rows):
+    #
+    #     context  1000 ->   8.4s     full 14k test set ~=  2 min
+    #     context  2000 ->  17.4s     full 14k test set ~=  4 min
+    #     context  4000 ->  44.5s     full 14k test set ~= 10 min
+    #
+    # 3000 keeps a full pipeline run (~26k val+test rows) near 13 minutes while
+    # staying well inside TabPFN's strong small-data regime. We fit on a
+    # stratified subsample but ALWAYS evaluate on the FULL test set, so its row
+    # in the scorecard is comparable with the other two. Say so in the deck.
+    train_subsample: 3000
     predict_batch_size: 2000
     params:
       device: cpu
       n_estimators: 4
+      ignore_pretraining_limits: true
 
 # ---------------------------------------------------------------- Member 2 --
 # Economic performance: what a confusion-matrix cell is worth to the client.
@@ -135,6 +145,13 @@ interpretability:
 stability:
   n_boot: 50                 # bootstrap re-fits per model
   bootstrap_frac: 0.8
+  # Flip rates are measured on a fixed random slice of the test set rather than
+  # all of it. Bounds the cost of re-scoring under every bootstrap re-fit.
+  eval_subsample: 1000
+  # Per-model cap. TabPFN costs minutes per re-fit on CPU where the other two
+  # cost under a second, so it gets a smaller budget and the table records it.
+  max_boot_per_model:
+    tabpfn: 10
   flip_threshold: 0.5        # decision threshold used for flip-rate counting
   perturbation:
     numeric_noise_sd: 0.05   # as a fraction of each feature's std
