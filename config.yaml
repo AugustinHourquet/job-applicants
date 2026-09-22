@@ -1,0 +1,170 @@
+# ============================================================================
+# Shared project configuration.
+#
+# This is the ONE file every team member touches. It is organised by owner so
+# that parallel edits land in different sections and git merges stay clean.
+# Add keys to your own section; do not restructure someone else's.
+# ============================================================================
+
+project:
+  name: job-applicants
+  seed: 42
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  models_dir: artifacts/models
+  results_dir: artifacts/results
+  figures_dir: artifacts/figures
+
+# ---------------------------------------------------------------- Member 1 --
+# Data acquisition, cleaning, leakage/proxy checks, feature build, split.
+data:
+  kaggle_dataset: ayushtankha/70k-job-applicants-data-human-resource
+  raw_filename: stackoverflow_full.csv
+  target: Employed
+
+  # Columns dropped before modelling, with the reason recorded for the deck.
+  drop_columns:
+    - column: "Unnamed: 0"
+      reason: "Row index carried over from the CSV export; carries no signal."
+
+  # Free-text multi-label column: semicolon-separated list of technologies.
+  # Expanded into a skill count plus indicator columns for the top-N tools.
+  multilabel_columns:
+    HaveWorkedWith:
+      separator: ";"
+      top_n: 25
+
+  categorical_features:
+    - Age
+    - Accessibility
+    - EdLevel
+    - Employment
+    - Gender
+    - MentalHealth
+    - MainBranch
+    - Country
+
+  numeric_features:
+    - YearsCode
+    - YearsCodePro
+    - PreviousSalary
+    - ComputerSkills
+
+  split:
+    test_size: 0.20
+    val_size: 0.20      # fraction of the post-test remainder
+    stratify: true
+
+# Automated screens run before modelling. Findings feed the "Data checks" page.
+checks:
+  # A single feature that separates the target this well is almost certainly
+  # leakage rather than signal. Flagged, not auto-dropped: the team decides.
+  leakage_auc_threshold: 0.90
+  # Normalised mutual information between a feature and a protected attribute.
+  # Above this, the feature is a usable proxy for that attribute.
+  proxy_nmi_threshold: 0.20
+
+# ------------------------------------------------------------- Members 1-3 --
+# One entry per model. `enabled: false` skips it without touching any code.
+models:
+  logistic_regression:
+    enabled: true
+    owner: "Member 1"
+    params:
+      C: 1.0
+      max_iter: 2000
+      class_weight: balanced
+
+  xgboost:
+    enabled: true
+    owner: "Member 2"
+    params:
+      n_estimators: 400
+      max_depth: 5
+      learning_rate: 0.05
+      subsample: 0.9
+      colsample_bytree: 0.9
+      reg_lambda: 1.0
+      eval_metric: logloss
+
+  tabpfn:
+    enabled: true
+    owner: "Member 3"
+    # TabPFN is a fixed-context transformer: inference cost grows with the
+    # training set and it is not designed for 70k rows on CPU. We fit on a
+    # stratified subsample but ALWAYS evaluate on the full test set, so the
+    # scorecard stays comparable across the three models. State this in the deck.
+    train_subsample: 10000
+    predict_batch_size: 2000
+    params:
+      device: cpu
+      n_estimators: 4
+
+# ---------------------------------------------------------------- Member 2 --
+# Economic performance: what a confusion-matrix cell is worth to the client.
+#
+# Client framing: a recruitment platform deciding which candidates to invest
+# coaching and placement effort in. Positive class = candidate ends up employed.
+economics:
+  currency: EUR
+  cost_matrix:
+    true_positive: 3000      # placement fee earned
+    false_positive: -800     # coaching + recruiter hours spent, no placement
+    false_negative: -1200    # opportunity cost of passing on a placeable candidate
+    true_negative: 0         # correctly declined, no cost
+  threshold_grid:
+    start: 0.01
+    stop: 0.99
+    step: 0.01
+
+# ---------------------------------------------------------------- Member 3 --
+interpretability:
+  shap_sample: 2000          # rows sampled from test for the SHAP summary
+  top_features: 20
+  local_examples: 10         # individual candidates explained in the app
+
+# ---------------------------------------------------------------- Member 4 --
+stability:
+  n_boot: 50                 # bootstrap re-fits per model
+  bootstrap_frac: 0.8
+  flip_threshold: 0.5        # decision threshold used for flip-rate counting
+  perturbation:
+    numeric_noise_sd: 0.05   # as a fraction of each feature's std
+    n_repeats: 10
+  shift:
+    # Hold-out slices used to check performance under distribution shift.
+    by: Country
+    min_group_size: 200
+
+# ---------------------------------------------------------------- Member 5 --
+fairness:
+  protected_attributes:
+    - Gender
+    - Age
+    - Accessibility
+    - MentalHealth
+  # Reference group per attribute; metrics are reported as gaps against it.
+  # `null` means "use the largest group in the training data".
+  reference_groups:
+    Gender: Man
+    Age: null
+    Accessibility: null
+    MentalHealth: null
+  metrics:
+    - selection_rate          # demographic parity
+    - true_positive_rate      # equal opportunity
+    - false_positive_rate     # equalised odds
+    - precision               # predictive parity
+  min_group_size: 100
+  mitigation:
+    reweighing: true          # pre-processing: sample weights by (group, label)
+    group_thresholds: true    # post-processing: per-group decision thresholds
+
+# ---------------------------------------------------------------- Member 6 --
+app:
+  title: "Trustworthy Hiring Scores"
+  client_name: "TalentBridge"
+  default_model: xgboost
+  page_icon: "📊"

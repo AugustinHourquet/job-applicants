@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+
+# Data is pulled from Kaggle by `make data`, never committed. The directory
+# skeleton is kept so a fresh clone has somewhere to put it.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Artifacts are produced by `make pipeline` and are fully reproducible.
+artifacts/models/*
+!artifacts/models/.gitkeep
+artifacts/results/*
+!artifacts/results/.gitkeep
+artifacts/figures/*
+!artifacts/figures/.gitkeep
+
+# Kaggle credentials.
+.env
+
+# Streamlit local state
+.streamlit/secrets.toml

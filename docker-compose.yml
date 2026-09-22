@@ -1,0 +1,62 @@
+# Three services over one image.
+#
+#   docker compose up app                    -> Streamlit on http://localhost:8501
+#   docker compose run --rm pipeline         -> rebuild every artifact
+#   docker compose run --rm test             -> run the smoke suite
+#
+# data/ and artifacts/ are bind-mounted, so anything a container produces lands
+# on your host and survives `docker compose down`.
+
+name: job-applicants
+
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: runtime
+  image: job-applicants:latest
+  environment:
+    # Compose reads these from the .env file beside this compose file.
+    # Empty defaults keep the stack usable before anyone sets up Kaggle.
+    KAGGLE_USERNAME: ${KAGGLE_USERNAME:-}
+    KAGGLE_KEY: ${KAGGLE_KEY:-}
+    PYTHONPATH: /app
+  volumes:
+    - ./data:/app/data
+    - ./artifacts:/app/artifacts
+    - tabpfn-cache:/home/app/.cache
+
+services:
+  # Interactive app for the client. Read-only with respect to artifacts.
+  app:
+    <<: *common
+    container_name: job-applicants-app
+    ports:
+      - "${APP_PORT:-8501}:8501"
+    restart: unless-stopped
+
+  # One-shot: download, build features, train, evaluate, write artifacts.
+  # Not started by `docker compose up` — it sits behind a profile on purpose,
+  # so nobody retrains by accident while the app is being demoed.
+  pipeline:
+    <<: *common
+    container_name: job-applicants-pipeline
+    profiles: ["pipeline"]
+    command: ["python", "-m", "src.pipeline"]
+
+  # Dev image (adds pytest). Needs no Kaggle credentials: the smoke test
+  # generates its own synthetic data.
+  test:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    image: job-applicants:dev
+    container_name: job-applicants-test
+    profiles: ["test"]
+    command: ["pytest", "-q"]
+
+volumes:
+  # TabPFN's pretrained checkpoint, downloaded once and reused.
+  tabpfn-cache:
