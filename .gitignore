@@ -228,6 +228,10 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
+# The honest-variant run writes here (see config.honest.yaml).
+artifacts-honest/
+data/processed-honest/
+
 # Artifacts are produced by `make pipeline` and are fully reproducible.
 artifacts/models/*
 !artifacts/models/.gitkeep

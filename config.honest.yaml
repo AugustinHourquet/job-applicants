@@ -1,0 +1,260 @@
+# ===========================================================================
+# HONEST-MODEL VARIANT
+#
+# Identical to config.yaml except that the leaking features are excluded and
+# the outputs go to their own directories, so both variants can sit side by
+# side for the deck.
+#
+# Run with:  uv run python -m src.pipeline --config config.honest.yaml
+#
+# Keep this file in sync by hand if you change config.yaml — there is no
+# inheritance, deliberately, so what each run used is readable in one file.
+# ===========================================================================
+
+# ============================================================================
+# Shared project configuration.
+#
+# This is the ONE file every team member touches. It is organised by owner so
+# that parallel edits land in different sections and git merges stay clean.
+# Add keys to your own section; do not restructure someone else's.
+# ============================================================================
+
+project:
+  name: job-applicants
+  seed: 42
+
+paths:
+  raw_dir: data/raw                          # shared: same download
+  processed_dir: data/processed-honest
+  models_dir: artifacts-honest/models
+  results_dir: artifacts-honest/results
+  figures_dir: artifacts-honest/figures
+
+# ---------------------------------------------------------------- Member 1 --
+# Data acquisition, cleaning, leakage/proxy checks, feature build, split.
+data:
+  kaggle_dataset: ayushtankha/70k-job-applicants-data-human-resource
+  raw_filename: stackoverflow_full.csv
+  target: Employed
+
+  # Columns dropped before modelling, with the reason recorded for the deck.
+  drop_columns:
+    - column: "Unnamed: 0"
+      reason: "Row index carried over from the CSV export; carries no signal."
+
+  # Free-text multi-label column: semicolon-separated list of technologies.
+  # Expanded into a skill count plus indicator columns for the top-N tools.
+  multilabel_columns:
+    HaveWorkedWith:
+      separator: ";"
+      top_n: 25
+
+  # Categoricals with a long tail (Country has ~170 levels) are capped: the
+  # most frequent levels are kept and the rest collapse into "Other". Keeps the
+  # design matrix small and stops one-hot columns with 3 rows from driving SHAP.
+  max_categorical_levels: 20
+  rare_level_name: Other
+
+  # Raw columns excluded from modelling. Empty means "use everything".
+  #
+  # We are KEEPING the leaky HaveWorkedWith indicators on purpose: the leakage
+  # is the finding this project reports. To produce the honest-model comparison
+  # for the deck, uncomment the two entries below and re-run — nothing else
+  # changes, and the scorecard becomes directly comparable.
+  #
+  exclude_features:
+    - HaveWorkedWith          # 25 tech indicators + count: held-out AUC 1.000
+    - ComputerSkills          # byte-identical to the HaveWorkedWith skill count
+
+  categorical_features:
+    - Age
+    - Accessibility
+    - EdLevel
+    - Employment
+    - Gender
+    - MentalHealth
+    - MainBranch
+    - Country
+
+  numeric_features:
+    - YearsCode
+    - YearsCodePro
+    - PreviousSalary
+    - ComputerSkills
+
+  split:
+    test_size: 0.20
+    val_size: 0.20      # fraction of the post-test remainder
+    stratify: true
+
+# Automated screens run before modelling. Findings feed the "Data checks" page.
+checks:
+  # A single feature that separates the target this well is almost certainly
+  # leakage rather than signal. Flagged, not auto-dropped: the team decides.
+  leakage_auc_threshold: 0.90
+  # Normalised mutual information between a feature and a protected attribute.
+  # Above this, the feature is a usable proxy for that attribute.
+  proxy_nmi_threshold: 0.20
+
+  # Multivariate leakage. The single-feature screen above is necessary but not
+  # sufficient: on this dataset no individual column exceeds 0.87, yet the 25
+  # HaveWorkedWith technology indicators together separate the target perfectly
+  # (held-out AUC 1.000). A leak can live entirely in a combination.
+  #
+  # This screen fits a fast linear model on the full encoded matrix, scores it
+  # on validation, and repeats per feature group so the source is immediately
+  # visible rather than inferred.
+  multivariate_leakage_auc_threshold: 0.95
+
+
+# ------------------------------------------------------------- Members 1-3 --
+# One entry per model. `enabled: false` skips it without touching any code.
+models:
+  logistic_regression:
+    enabled: true
+    owner: "Member 1"
+    params:
+      C: 1.0
+      max_iter: 2000
+      class_weight: balanced
+
+  xgboost:
+    enabled: true
+    owner: "Member 2"
+    params:
+      n_estimators: 400
+      max_depth: 5
+      learning_rate: 0.05
+      subsample: 0.9
+      colsample_bytree: 0.9
+      reg_lambda: 1.0
+      eval_metric: logloss
+
+  tabpfn:
+    enabled: true
+    owner: "Member 3"
+    # TabPFN is a fixed-context transformer. Inference cost grows super-linearly
+    # with the training context, and it refuses >1000 CPU rows unless the limit
+    # is explicitly overridden. Measured on this machine (CPU, 42 features,
+    # seconds per 1000 test rows):
+    #
+    #     context  1000 ->   8.4s     full 14k test set ~=  2 min
+    #     context  2000 ->  17.4s     full 14k test set ~=  4 min
+    #     context  4000 ->  44.5s     full 14k test set ~= 10 min
+    #
+    # Measured again on the REAL data (61 features, 26,446 val+test rows): a
+    # context of 3000 took 33 minutes, not the 13 estimated from a 42-feature
+    # synthetic run. Cost scales with feature count too. Budget half an hour for
+    # a full pipeline run, or drop this to ~1500 while iterating. We fit on a
+    # stratified subsample but ALWAYS evaluate on the FULL test set, so its row
+    # in the scorecard is comparable with the other two. Say so in the deck.
+    train_subsample: 3000
+    predict_batch_size: 2000
+    params:
+      device: cpu
+      n_estimators: 4
+      ignore_pretraining_limits: true
+
+# ---------------------------------------------------------------- Member 2 --
+# Economic performance: what a confusion-matrix cell is worth to the client.
+#
+# Client framing: a recruitment platform deciding which candidates to invest
+# coaching and placement effort in. Positive class = candidate ends up employed.
+economics:
+  currency: EUR
+  # The client sponsors a candidate: paid coaching and recruiter time up front,
+  # a placement fee on success. Sponsoring is genuinely expensive, which is why
+  # the decision is interesting — if screening were cheap the answer would just
+  # be "sponsor everyone".
+  cost_matrix:
+    true_positive: 3000      # placement fee earned on a sponsored candidate
+    false_positive: -2500    # coaching + recruiter time spent, no placement
+    false_negative: -500     # margin lost on someone who placed without us
+    true_negative: 0         # correctly declined, nothing spent
+  #
+  # Sanity check for the empirical optimum below. Under this matrix a candidate
+  # is worth sponsoring when their predicted probability exceeds
+  #
+  #     t* = (C_TN - C_FP) / ((C_TN - C_FP) + (C_TP - C_FN))
+  #        = 2500 / (2500 + 3500) = 0.417
+  #
+  # A model whose profit-maximising threshold sits far from 0.417 is telling you
+  # its probabilities are miscalibrated, which is itself worth a slide.
+  #
+  # An earlier draft used -800 / -1200 here. That put t* at 0.16, made
+  # "sponsor almost everyone" optimal, and left the model adding almost nothing
+  # over the accept-all baseline. Keep FP expensive relative to FN or the whole
+  # economic analysis degenerates.
+  threshold_grid:
+    start: 0.01
+    stop: 0.99
+    step: 0.01
+
+# ---------------------------------------------------------------- Member 3 --
+interpretability:
+  shap_sample: 2000          # rows sampled from test for the SHAP summary
+  top_features: 20
+  local_examples: 10         # individual candidates explained in the app
+
+  # Permutation importance is the fallback for TabPFN, which has no tree
+  # structure for TreeSHAP and is far too slow for KernelSHAP on CPU. It costs
+  # one full inference pass per (feature x repeat), so the budget is explicit:
+  # 12 features x 2 repeats = 24 passes over 300 rows, roughly 4 minutes.
+  # Left uncapped over all 42 features it took longer than the rest of the
+  # pipeline combined. Features are shortlisted by absolute correlation with
+  # the target, a cheap model-agnostic screen — state in the deck that this is
+  # a shortlist, not an exhaustive ranking.
+  permutation_sample: 300
+  permutation_max_features: 12
+  permutation_repeats: 2
+
+# ---------------------------------------------------------------- Member 4 --
+stability:
+  n_boot: 50                 # bootstrap re-fits per model
+  bootstrap_frac: 0.8
+  # Flip rates are measured on a fixed random slice of the test set rather than
+  # all of it. Bounds the cost of re-scoring under every bootstrap re-fit.
+  eval_subsample: 1000
+  # Per-model cap. TabPFN costs minutes per re-fit on CPU where the other two
+  # cost under a second, so it gets a smaller budget and the table records it.
+  max_boot_per_model:
+    tabpfn: 10
+  flip_threshold: 0.5        # decision threshold used for flip-rate counting
+  perturbation:
+    numeric_noise_sd: 0.05   # as a fraction of each feature's std
+    n_repeats: 10
+  shift:
+    # Hold-out slices used to check performance under distribution shift.
+    by: Country
+    min_group_size: 200
+
+# ---------------------------------------------------------------- Member 5 --
+fairness:
+  protected_attributes:
+    - Gender
+    - Age
+    - Accessibility
+    - MentalHealth
+  # Reference group per attribute; metrics are reported as gaps against it.
+  # `null` means "use the largest group in the training data".
+  reference_groups:
+    Gender: Man
+    Age: null
+    Accessibility: null
+    MentalHealth: null
+  metrics:
+    - selection_rate          # demographic parity
+    - true_positive_rate      # equal opportunity
+    - false_positive_rate     # equalised odds
+    - precision               # predictive parity
+  min_group_size: 100
+  mitigation:
+    reweighing: true          # pre-processing: sample weights by (group, label)
+    group_thresholds: true    # post-processing: per-group decision thresholds
+
+# ---------------------------------------------------------------- Member 6 --
+app:
+  title: "Trustworthy Hiring Scores"
+  client_name: "TalentBridge"
+  default_model: xgboost
+  page_icon: "📊"

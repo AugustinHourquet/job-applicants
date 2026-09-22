@@ -22,6 +22,12 @@ data:  ## Download the raw dataset from Kaggle into data/raw/
 pipeline:  ## Full run: features, training, all four evaluation dimensions
 	uv run python -m src.pipeline
 
+pipeline-honest:  ## Same pipeline, leaking features excluded (writes artifacts-honest/)
+	uv run python -m src.pipeline --config config.honest.yaml
+
+compare:  ## Print both scorecards side by side
+	uv run python -m src.compare
+
 app:  ## Launch Streamlit locally on http://localhost:8501
 	uv run streamlit run app/Home.py
 
