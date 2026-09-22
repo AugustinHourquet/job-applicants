@@ -278,11 +278,44 @@ def test_bootstrap_stability_reports_its_own_sample_size(raw_df, cfg):
     assert len(per_row) == min(cfg.stability.eval_subsample, len(bundle.X_test))
 
 
-def test_tabpfn_bootstrap_budget_is_capped(cfg):
-    """TabPFN costs minutes per re-fit; the cap must actually bind."""
+def test_expensive_model_gets_a_reduced_stability_budget(cfg):
+    """TabPFN costs ~75s per 1000 rows on the real data; the caps must bind.
+
+    Left uncapped, stability alone asks it for ~34,700 predictions — longer
+    than the rest of the pipeline combined, paid by each of six people on
+    every run.
+    """
     cfg.stability.n_boot = 50
-    assert stability._budget(cfg, "tabpfn") == 10
-    assert stability._budget(cfg, "xgboost") == 50
+    cfg.stability.eval_subsample = 1000
+    cfg.stability.perturbation["n_repeats"] = 10
+    cfg.stability.shift["eval_subsample"] = 6000
+
+    for key, cheap, expensive in [
+        ("n_boot", 50, 10),
+        ("eval_subsample", 1000, 500),
+        ("perturbation_repeats", 10, 3),
+        ("shift_eval_subsample", 6000, 2000),
+    ]:
+        assert stability.budget(cfg, "xgboost", key) == cheap, key
+        assert stability.budget(cfg, "tabpfn", key) == expensive, key
+
+
+def test_per_model_budget_never_raises_the_global_setting(cfg):
+    """An override may only reduce work, never silently ask for more."""
+    cfg.stability.n_boot = 4  # global budget below the per-model cap of 10
+    assert stability.budget(cfg, "tabpfn", "n_boot") == 4
+
+
+def test_shift_probe_respects_its_budget(raw_df, cfg):
+    cfg.models["tabpfn"].enabled = False
+    cfg.stability.shift["eval_subsample"] = 50
+    cfg.stability.shift["min_group_size"] = 1
+    bundle = data.build_datasets(cfg, raw=raw_df)
+    fitted = models.train_all(cfg, bundle)
+    shift = stability.shift_stability(cfg, bundle, "xgboost", fitted["xgboost"], bundle.raw_test)
+    if not shift.empty:
+        assert shift["n_scored"].iloc[0] == 50
+        assert shift["n"].sum() <= 50
 
 
 # ----------------------------------------------------------------- pipeline --

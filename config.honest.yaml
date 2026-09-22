@@ -215,10 +215,6 @@ stability:
   # Flip rates are measured on a fixed random slice of the test set rather than
   # all of it. Bounds the cost of re-scoring under every bootstrap re-fit.
   eval_subsample: 1000
-  # Per-model cap. TabPFN costs minutes per re-fit on CPU where the other two
-  # cost under a second, so it gets a smaller budget and the table records it.
-  max_boot_per_model:
-    tabpfn: 10
   flip_threshold: 0.5        # decision threshold used for flip-rate counting
   perturbation:
     numeric_noise_sd: 0.05   # as a fraction of each feature's std
@@ -227,6 +223,23 @@ stability:
     # Hold-out slices used to check performance under distribution shift.
     by: Country
     min_group_size: 200
+    eval_subsample: 6000     # rows scored for the subgroup breakdown
+
+  # Reduced budget for models whose inference is expensive. Logistic regression
+  # and XGBoost score 1000 rows in milliseconds; TabPFN needs ~75 seconds on the
+  # real data, measured. At the full budget above, stability alone asks TabPFN to
+  # score ~34,700 rows — about 45 minutes, which is longer than the rest of the
+  # pipeline put together and a cost each of six people would pay on every run.
+  #
+  # The settings below cut that to ~8,500 rows (roughly 11 minutes). Every number
+  # in stability.csv records the budget it was computed under, so a smaller
+  # sample is visible rather than hidden.
+  budget_per_model:
+    tabpfn:
+      n_boot: 10
+      eval_subsample: 500
+      perturbation_repeats: 3
+      shift_eval_subsample: 2000
 
 # ---------------------------------------------------------------- Member 5 --
 fairness:

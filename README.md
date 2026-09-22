@@ -158,6 +158,15 @@ than 1000 CPU rows unless overridden. We fit on a stratified subsample
 full test set**, so its scorecard row stays comparable. Measured timings are
 recorded in `config.yaml` — quote them if the jury asks why we subsampled.
 
+**A full run takes ~45 minutes, and almost all of it is TabPFN.** On the real
+data TabPFN scores about 1000 rows in 75 seconds on CPU. Two things follow:
+
+- `stability.budget_per_model` gives it a reduced probe budget (~8,500 rows
+  instead of ~34,700). Every stability number records the budget it was
+  computed under, so the smaller sample is visible rather than hidden.
+- While iterating, skip it: `--models logistic_regression xgboost` or
+  `--skip stability` turns a 45-minute run into about two minutes.
+
 **The app says "No results yet".** You have not run the pipeline, or you ran it
 inside Docker with a different `artifacts/` mount. Run `make pipeline`.
 

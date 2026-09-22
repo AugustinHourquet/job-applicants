@@ -36,20 +36,53 @@ from src.models import FittedModel, train_one
 logger = logging.getLogger(__name__)
 
 
-def _budget(cfg: Config, model_name: str) -> int:
-    caps = getattr(cfg.stability, "max_boot_per_model", {}) or {}
-    return int(min(cfg.stability.n_boot, caps.get(model_name, cfg.stability.n_boot)))
+def budget(cfg: Config, model_name: str, key: str, default_key: str | None = None) -> int:
+    """One stability setting for one model, after any per-model reduction.
+
+    Inference cost differs by orders of magnitude across the three models —
+    logistic regression scores a thousand rows in milliseconds, TabPFN needs
+    about seventy-five seconds. ``stability.budget_per_model`` lets the
+    expensive one run a smaller probe rather than forcing everyone to wait for
+    the slowest, and the reduced value is written into the output so a smaller
+    sample is visible rather than hidden.
+
+    A per-model value never *raises* the global setting, only lowers it.
+    """
+    overrides = (getattr(cfg.stability, "budget_per_model", {}) or {}).get(model_name, {})
+    settings = cfg.stability
+    fallback_key = default_key or key
+
+    if fallback_key == "perturbation_repeats":
+        global_value = int((settings.perturbation or {}).get("n_repeats", 10))
+    elif fallback_key == "shift_eval_subsample":
+        global_value = int((settings.shift or {}).get("eval_subsample", 6000))
+    else:
+        global_value = int(getattr(settings, fallback_key))
+
+    return int(min(global_value, overrides.get(key, global_value)))
 
 
-def _eval_slice(cfg: Config, bundle: DataBundle) -> tuple[pd.DataFrame, pd.Series]:
-    """Fixed random slice of the test set that every probe is measured on."""
+def _eval_slice(
+    cfg: Config, bundle: DataBundle, model_name: str, key: str = "eval_subsample"
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Fixed random slice of the test set that a probe is measured on.
+
+    Seeded, so every model sees the same rows and flip rates stay comparable;
+    a model on a reduced budget sees a subset of that same slice rather than a
+    different draw.
+    """
     X, y, _ = bundle.split("test")
-    size = int(getattr(cfg.stability, "eval_subsample", 1000))
+    size = budget(cfg, model_name, key)
     if size >= len(X):
         return X, y
     rng = np.random.default_rng(cfg.seed)
     idx = np.sort(rng.choice(len(X), size=size, replace=False))
     return X.iloc[idx], y.iloc[idx]
+
+
+# Kept for callers that only want the re-fit count.
+def _budget(cfg: Config, model_name: str) -> int:
+    return budget(cfg, model_name, "n_boot")
 
 
 def bootstrap_stability(
@@ -63,7 +96,7 @@ def bootstrap_stability(
     """
     from sklearn.metrics import roc_auc_score
 
-    X_eval, y_eval = _eval_slice(cfg, bundle)
+    X_eval, y_eval = _eval_slice(cfg, bundle, model_name)
     threshold = float(cfg.stability.flip_threshold)
     reference_prob = reference.predict_proba(X_eval)
     reference_decision = (reference_prob >= threshold).astype(int)
@@ -142,9 +175,9 @@ def perturbation_stability(
     """
     settings = cfg.stability.perturbation or {}
     noise_sd = float(settings.get("numeric_noise_sd", 0.05))
-    n_repeats = int(settings.get("n_repeats", 10))
+    n_repeats = budget(cfg, model_name, "perturbation_repeats")
 
-    X_eval, y_eval = _eval_slice(cfg, bundle)
+    X_eval, y_eval = _eval_slice(cfg, bundle, model_name)
     threshold = float(cfg.stability.flip_threshold)
     reference_decision = (reference.predict_proba(X_eval) >= threshold).astype(int)
 
@@ -171,6 +204,7 @@ def perturbation_stability(
                 "n_evaluated": len(X_eval),
                 "noise_sd_fraction": noise_sd,
                 "n_repeats": n_repeats,
+                "n_evaluated_rows": len(X_eval),
                 "mean_flip_rate": float(np.mean(flip_rates)),
                 "max_flip_rate": float(np.max(flip_rates)),
             }
@@ -195,8 +229,21 @@ def shift_stability(
     if not by or by not in raw_test.columns:
         return pd.DataFrame()
 
-    _, y_test, _ = bundle.split("test")
-    probs = reference.predict_proba(bundle.X_test)
+    X_test, y_test, _ = bundle.split("test")
+    # Scoring the whole test set here was the single most expensive thing in the
+    # pipeline: it asked the slowest model for ~14,700 predictions to answer a
+    # question a sample answers just as well. Subgroups still have to clear
+    # min_group_size after sampling, so undersized slices are dropped rather
+    # than reported from a handful of rows.
+    size = budget(cfg, model_name, "shift_eval_subsample")
+    if size < len(X_test):
+        rng = np.random.default_rng(cfg.seed)
+        idx = np.sort(rng.choice(len(X_test), size=size, replace=False))
+        X_test = X_test.iloc[idx]
+        y_test = y_test.iloc[idx]
+        raw_test = raw_test.iloc[idx]
+
+    probs = reference.predict_proba(X_test)
     frame = pd.DataFrame(
         {"group": raw_test[by].astype(str).to_numpy(), "y_true": y_test.to_numpy(), "y_prob": probs}
     )
@@ -212,6 +259,7 @@ def shift_stability(
                 "attribute": by,
                 "group": group_value,
                 "n": len(group),
+                "n_scored": len(frame),
                 "base_rate": float(group["y_true"].mean()),
                 "roc_auc": float(roc_auc_score(group["y_true"], group["y_prob"])),
                 "mean_prob": float(group["y_prob"].mean()),
